@@ -18,7 +18,7 @@ use self::{
         coding::{CloseCode, Control as OpCtl, Data as OpData, OpCode},
         Frame, FrameCodec,
     },
-    message::{IncompleteMessage, IncompleteMessageType},
+    message::IncompleteMessage,
 };
 use crate::{
     error::{Error, ProtocolError, Result},
@@ -517,12 +517,7 @@ impl WebSocketContext {
                         }
                         OpData::Text | OpData::Binary => {
                             let msg = {
-                                let message_type = match data {
-                                    OpData::Text => IncompleteMessageType::Text,
-                                    OpData::Binary => IncompleteMessageType::Binary,
-                                    _ => panic!("Bug: message is not text nor binary"),
-                                };
-                                let mut m = IncompleteMessage::new(message_type);
+                                let mut m = IncompleteMessage::new();
                                 m.extend(frame.into_data(), self.config.max_message_size)?;
                                 m
                             };

@@ -8,109 +8,23 @@ use std::{
 use super::frame::{CloseFrame, Frame};
 use crate::error::{CapacityError, Error, Result};
 
-mod string_collect {
-    use utf8::DecodeError;
-
-    use crate::error::{Error, Result};
-
-    #[derive(Debug)]
-    pub struct StringCollector {
-        data: String,
-        incomplete: Option<utf8::Incomplete>,
-    }
-
-    impl StringCollector {
-        pub fn new() -> Self {
-            StringCollector { data: String::new(), incomplete: None }
-        }
-
-        pub fn len(&self) -> usize {
-            self.data
-                .len()
-                .saturating_add(self.incomplete.map(|i| i.buffer_len as usize).unwrap_or(0))
-        }
-
-        pub fn extend<T: AsRef<[u8]>>(&mut self, tail: T) -> Result<()> {
-            let mut input: &[u8] = tail.as_ref();
-
-            if let Some(mut incomplete) = self.incomplete.take() {
-                if let Some((result, rest)) = incomplete.try_complete(input) {
-                    input = rest;
-                    if let Ok(text) = result {
-                        self.data.push_str(text);
-                    } else {
-                        return Err(Error::Utf8);
-                    }
-                } else {
-                    input = &[];
-                    self.incomplete = Some(incomplete);
-                }
-            }
-
-            if !input.is_empty() {
-                match utf8::decode(input) {
-                    Ok(text) => {
-                        self.data.push_str(text);
-                        Ok(())
-                    }
-                    Err(DecodeError::Incomplete { valid_prefix, incomplete_suffix }) => {
-                        self.data.push_str(valid_prefix);
-                        self.incomplete = Some(incomplete_suffix);
-                        Ok(())
-                    }
-                    Err(DecodeError::Invalid { valid_prefix, .. }) => {
-                        self.data.push_str(valid_prefix);
-                        Err(Error::Utf8)
-                    }
-                }
-            } else {
-                Ok(())
-            }
-        }
-
-        pub fn into_string(self) -> Result<String> {
-            if self.incomplete.is_some() {
-                Err(Error::Utf8)
-            } else {
-                Ok(self.data)
-            }
-        }
-    }
-}
-
-use self::string_collect::StringCollector;
-
 /// A struct representing the incomplete message.
 #[derive(Debug)]
 pub struct IncompleteMessage {
-    collector: IncompleteMessageCollector,
-}
-
-#[derive(Debug)]
-enum IncompleteMessageCollector {
-    Text(StringCollector),
-    Binary(Vec<u8>),
+    collector: Vec<u8>,
 }
 
 impl IncompleteMessage {
     /// Create new.
-    pub fn new(message_type: IncompleteMessageType) -> Self {
+    pub fn new() -> Self {
         IncompleteMessage {
-            collector: match message_type {
-                IncompleteMessageType::Binary => IncompleteMessageCollector::Binary(Vec::new()),
-                IncompleteMessageType::Text => {
-                    IncompleteMessageCollector::Text(StringCollector::new())
-                }
-            },
+            collector: Vec::new(),
         }
     }
 
     /// Get the current filled size of the buffer.
     pub fn len(&self) -> usize {
-        match self.collector {
-            IncompleteMessageCollector::Text(ref t) => t.len(),
-            IncompleteMessageCollector::Binary(ref b) => b.len(),
-        }
+        self.collector.len()
     }
 
     /// Add more data to an existing message.
@@ -128,31 +42,14 @@ impl IncompleteMessage {
             }));
         }
 
-        match self.collector {
-            IncompleteMessageCollector::Binary(ref mut v) => {
-                v.extend(tail.as_ref());
-                Ok(())
-            }
-            IncompleteMessageCollector::Text(ref mut t) => t.extend(tail),
-        }
+        self.collector.extend(tail.as_ref());
+        Ok(())
     }
 
     /// Convert an incomplete message into a complete one.
     pub fn complete(self) -> Result<Message> {
-        match self.collector {
-            IncompleteMessageCollector::Binary(v) => Ok(Message::Binary(v)),
-            IncompleteMessageCollector::Text(t) => {
-                let text = t.into_string()?;
-                Ok(Message::Text(text))
-            }
-        }
+        Ok(Message::Binary(self.collector))
     }
-}
-
-/// The type of incomplete message.
-pub enum IncompleteMessageType {
-    Text,
-    Binary,
 }
 
 /// An enum representing the various forms of a WebSocket message.
